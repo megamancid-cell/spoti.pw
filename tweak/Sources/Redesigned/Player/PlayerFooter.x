@@ -22,6 +22,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Player.h"
+#import <AVFoundation/AVFoundation.h>
 
 static const CGFloat kLyricsGlyphSize = 20;
 // Filled and at full strength while the lyrics are up, the way the Music app marks the control that is on.
@@ -40,7 +41,59 @@ static const CGFloat kRowAboveSafeArea = 20, kRowMinBottom = 34;
 static const CGFloat kControlsShare = 0.3;
 
 static char kConnectKey, kShareKey, kTrimmerKey, kQueueKey, kLyricsGlyphKey, kReachKey;
+static char kConnectOriginalImageKey, kConnectImageCapturedKey, kConnectAirPodsShownKey;
 static __weak SGRGlyphButton *sg_lyricsGlyph;
+static NSHashTable<UIImageView *> *sg_connectGlyphs;
+
+// Match Apple Music's route-aware footer: show the regular AirPods (2nd generation) glyph only while an AirPods route is active.
+// Spotify's original image is retained and restored for every other output route; the containing
+// Connect button remains Spotify's own control, so tapping it still opens Spotify Connect.
+static BOOL SGRCurrentRouteIsAirPods(void) {
+    for (AVAudioSessionPortDescription *port in AVAudioSession.sharedInstance.currentRoute.outputs) {
+        if ([port.portName rangeOfString:@"AirPods" options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static void SGRUpdateConnectGlyph(UIImageView *imageView, BOOL animated) {
+    if (![imageView isKindOfClass:UIImageView.class]) return;
+    BOOL airPods = SGRCurrentRouteIsAirPods();
+    NSNumber *previousState = objc_getAssociatedObject(imageView, &kConnectAirPodsShownKey);
+    if (previousState && previousState.boolValue == airPods) return;
+    if (!objc_getAssociatedObject(imageView, &kConnectImageCapturedKey)) {
+        objc_setAssociatedObject(imageView, &kConnectOriginalImageKey, imageView.image ?: (id)NSNull.null, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(imageView, &kConnectImageCapturedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    UIImage *target = nil;
+    if (airPods) {
+        UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:19 weight:UIImageSymbolWeightRegular];
+        target = [UIImage systemImageNamed:@"airpods" withConfiguration:configuration];
+        // Older iOS symbol catalogs may not include the regular AirPods glyph. Prefer an AirPods-specific
+        // fallback before using the generic headphones symbol.
+        if (!target) target = [UIImage systemImageNamed:@"airpodspro" withConfiguration:configuration];
+        if (!target) target = [UIImage systemImageNamed:@"headphones" withConfiguration:configuration];
+        target = [target imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    } else {
+        id original = objc_getAssociatedObject(imageView, &kConnectOriginalImageKey);
+        target = original == NSNull.null ? nil : original;
+    }
+
+    UIImage *current = imageView.image;
+    if ((current == target) || [current isEqual:target]) {
+        objc_setAssociatedObject(imageView, &kConnectAirPodsShownKey, @(airPods), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return;
+    }
+    objc_setAssociatedObject(imageView, &kConnectAirPodsShownKey, @(airPods), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    void (^swap)(void) = ^{ imageView.image = target; };
+    if (animated && imageView.window && !UIAccessibilityIsReduceMotionEnabled()) {
+        [UIView transitionWithView:imageView duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionBeginFromCurrentState animations:swap completion:nil];
+    } else swap();
+}
+
+static void SGRRefreshConnectGlyphs(void) {
+    for (UIImageView *imageView in sg_connectGlyphs.allObjects) SGRUpdateConnectGlyph(imageView, YES);
+}
 
 // The view the footer's stack view arranges around `view`.
 static UIView *arrangedAround(UIView *view, UIView *host) {
@@ -105,6 +158,11 @@ static UIView *connectGlyphIn(UIView *holder) {
     SGForEachView(holder, ^(UIView *view) {
         if (!glyph && [view isKindOfClass:UIImageView.class] && view.bounds.size.width > 0 && view.bounds.size.width <= kGlyphMaxWidth) glyph = view;
     });
+    if ([glyph isKindOfClass:UIImageView.class]) {
+        if (!sg_connectGlyphs) sg_connectGlyphs = [NSHashTable weakObjectsHashTable];
+        [sg_connectGlyphs addObject:(UIImageView *)glyph];
+        SGRUpdateConnectGlyph((UIImageView *)glyph, NO);
+    }
     return glyph;
 }
 
@@ -251,4 +309,12 @@ static void layOutFooter(UIViewController *unit) {
     if (!SGRedesignedUI()) return;
     %init;
     SGRequireClasses(@[@"_TtC20NowPlaying_ModesImpl18FooterElementsUnit", @"_TtC32ReinventFree_ReinventFreeNpvImpl30ReinventFreeFooterElementsUnit"]);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification
+                                                            object:nil queue:NSOperationQueue.mainQueue
+                                                        usingBlock:^(__unused NSNotification *note) {
+            SGRRefreshConnectGlyphs();
+        }];
+        SGRRefreshConnectGlyphs();
+    });
 }

@@ -11,7 +11,7 @@ static const CGFloat kFallbackHeight = 874;   // a window-less field sizes for a
 
 // Where the colour starts fading to black and where it is black, as shares of the window's height:
 // the redesign is AMOLED throughout (SGRAmoled.x).
-static const CGFloat kBlackFrom = 0.55, kBlackTo = 1;
+static const CGFloat kBlackFrom = 0.58, kBlackTo = 1;
 
 static CGFloat windowHeight(UIView *view) {
     CGFloat height = view.window.bounds.size.height;
@@ -181,7 +181,9 @@ static NSDictionary *noActions(void) {
         fade.fromValue = from;
         // Read back rather than the colour asked for: SGRAmoled.x may have swapped it for black.
         fade.toValue = (__bridge id)_solid.backgroundColor;
-        fade.duration = SGRCrossfade;
+        // Let the artwork-derived field ease between colours like Music’s ambient backdrop,
+        // without shortening the project-wide minimum crossfade.
+        fade.duration = MAX(SGRCrossfade, 1.6);
         fade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
         [_solid addAnimation:fade forKey:@"backgroundColor"];
     }

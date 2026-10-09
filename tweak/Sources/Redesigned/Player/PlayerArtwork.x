@@ -13,7 +13,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Player.h"
 
-static const CGFloat kPausedScale = 0.84, kPausedScaleReduceMotion = 0.92;
+static const CGFloat kPausedScale = 0.94, kPausedScaleReduceMotion = 0.97;
 // The bar's 40pt cover lives in a tilt view of its own; the player's is 354.
 static const CGFloat kCoverMinWidth = 200;
 
